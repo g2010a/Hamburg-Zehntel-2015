@@ -26,7 +26,7 @@ var Simulation = function (options) {
     this.target = options.target;
     this.orgs = options.orgs;
     this.max_runners_displayed = options.max_runners_displayed || 500;  // Too many runners crash slow browsers
-    this.top_bottom_retained = options.top_bottom_retained || 5;        // Number of top/bottom runners to ALWAYS display
+    this.top_bottom_retained = options.top_bottom_retained || 10;       // Number of top/bottom runners to ALWAYS display
     this.radius = options.radius || 2;                                  // The radius of the circles representing runners
     this.duration = options.duration || 50000;                          // Animation length
     
@@ -34,6 +34,7 @@ var Simulation = function (options) {
     this._status = "stopped";
     this._max_runtime = null;
     this._dom_runners = [];
+    this._timer = null;
     this._highlighted = null;
     this._jTarget = $(this.target);
     this._dTarget = d3.select(this.target);
@@ -61,8 +62,9 @@ var Simulation = function (options) {
 // Reset animation
 // 
 Simulation.prototype.reset = function(){
-    // Choose a subset of runners to display so as to not bog down the browser with thousands
     var self = this;
+    self._dom_runners.length && self._dom_runners.transition().duration(0);
+    self._timer && self._timer.transition().duration(0);
     
     // Build array of highlighted runners
     self._highlighted_ids = []; 
@@ -81,7 +83,7 @@ Simulation.prototype.reset = function(){
         }
     }
 console.log(this);    
-    // Choose runners to display
+    // Choose a subset of runners to display so as to not bog down the browser with thousands
     var chances_runner_is_displayed = self.max_runners_displayed / (self.ds_full.length - 2 * self.top_bottom_retained - self._highlighted_ids.length);
     self._ds = self.ds_full.where({
         rows: function(row) {
@@ -95,10 +97,18 @@ console.log(this);
     self._t = d3.scale.linear().domain([0, self._max_runtime.asMinutes()]).range([0, self.duration]);
     
     // Runners
+    var max_age = self._ds.max("age"),
+        min_age = self._ds.min("age"),
+        strip_size = (self._y(0) / (2*(max_age - min_age)));    // One strip per age per gender
     self._svg.selectAll(".runner").remove();
     self._dom_runners = self._svg.selectAll(".runner").data(self._ds.toJSON());
     self._dom_runners.enter().append("circle")
-        .attr("cy", function(){ return self._y(Math.round(Math.random()*100));})
+        .attr("cy", function(d){
+            // Order by age and gender to show differences
+            var gndr_offset = d.gndr === "F" ? (max_age - min_age) : 0,     // Divide girls from boys
+                age_offset = d.age - min_age;                               // Stratify by age
+            return strip_size * (gndr_offset + age_offset) + Math.round(Math.random()*strip_size);
+        })
         .attr("cx", 0)
         .attr("r", self.radius)
         .attr("data-id", function(d){ return d._id; })
@@ -206,7 +216,7 @@ console.log("Event! ", data, evt);
 
     
     // Retrieve data from files
-    status.html("Loading data...");
+    status.html("Loading data (>1MB may take a while)...");
     $.getJSON("data/data_cols.json")
         .done(toDataset)
         .fail(function(error){
@@ -272,17 +282,21 @@ console.log("Event! ", data, evt);
             }
         });
          
-       // Charts
-        sim = new Simulation({ target: "#simulation", data: ds_2015, orgs: persistent.orgs, max_runners_displayed: 1100 });
-
+        // Charts
+        status.html("Rendering simulation...");
+        sim = new Simulation({ target: "#simulation", data: ds_2015, orgs: persistent.orgs, max_runners_displayed: 1000 });
+        $("[data-d-sim-runners]").html(sim.get_displayed().length + "/" + ds_2015.length);
+        
+        status.html("Calculating age histogram...");
         _age_histogram(ds_2015);
+        status.html("");
     }
     
     /* 
      * Age histogram
      */
     function _age_histogram(ds){
-        status.html("Calculating age histogram...");
+        
         var jcontainer = $("#age_histogram"),
             margin = {top: 10, right: 30, bottom: 30, left: 30},
             width = jcontainer.width() - margin.left - margin.right,
