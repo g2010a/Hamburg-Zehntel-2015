@@ -17,6 +17,7 @@
  *  highlight(list_of_runners)
  */
 var Simulation = function (options) {
+    var self = this;
     if (!options.data || !options.target || !options.orgs) {
         console.log("Data, target and orgs are required");
         return false;
@@ -29,6 +30,7 @@ var Simulation = function (options) {
     this.top_bottom_retained = options.top_bottom_retained || 10;       // Number of top/bottom runners to ALWAYS display
     this.radius = options.radius || 2;                                  // The radius of the circles representing runners
     this.duration = options.duration || 50000;                          // Animation length
+    this.run_length = 4;                                                // Marathon length in km
     
     this._ds = {};
     this._status = "stopped";
@@ -38,7 +40,7 @@ var Simulation = function (options) {
     this._highlighted = null;
     this._jTarget = $(this.target);
     this._dTarget = d3.select(this.target);
-    this._margin = {top: this.radius , right: this.radius + 60, bottom: this.radius, left: this.radius};
+    this._margin = {top: this.radius , right: this.radius + 60, bottom: this.radius + 20, left: this.radius + 10};
     this._height = this._jTarget.height() - this._margin.top - this._margin.bottom;
     this._width = this._jTarget.width() - this._margin.left - this._margin.right;
     this._min_max_rank = this.ds_full.max("rank") - this.top_bottom_retained;
@@ -54,6 +56,17 @@ var Simulation = function (options) {
             .append("g")
             .attr("transform", "translate(" + this._margin.left + "," + this._margin.top + ")");
 
+    // X Axis
+    var xaxis = d3.svg.axis()
+        .scale(this._x)
+        .orient("bottom")
+        .tickValues([.25,.5,.75,1])
+        .tickFormat(function(d){ return d3.format(".0f")(d*self.run_length) + "km";});
+    
+   this._svg.append("g")
+        .attr("class", "axis x")
+        .attr("transform", "translate(0," + this._height + ")")
+        .call(xaxis);
     // Initialize data
     this.reset();
 };
@@ -82,7 +95,6 @@ Simulation.prototype.reset = function(){
             });
         }
     }
-console.log(this);    
     // Choose a subset of runners to display so as to not bog down the browser with thousands
     var chances_runner_is_displayed = self.max_runners_displayed / (self.ds_full.length - 2 * self.top_bottom_retained - self._highlighted_ids.length);
     self._ds = self.ds_full.where({
@@ -91,8 +103,11 @@ console.log(this);
             if (_.contains(self._highlighted_ids, row._id)) return true;
             return Math.random() <= chances_runner_is_displayed;
         }
+    }).sort(function(a,b){
+        // Bubble up highlighted runners so they're drawn on top
+        var aIsHl = _.contains(self._highlighted_ids, a._id);
+        return aIsHl ? 1 : -1;
     });
-
     self._max_runtime = self._ds.max("tot_time");
     self._t = d3.scale.linear().domain([0, self._max_runtime.asMinutes()]).range([0, self.duration]);
     
@@ -106,8 +121,13 @@ console.log(this);
         .attr("cy", function(d){
             // Order by age and gender to show differences
             var gndr_offset = d.gndr === "F" ? (max_age - min_age) : 0,     // Divide girls from boys
-                age_offset = d.age - min_age;                               // Stratify by age
-            return strip_size * (gndr_offset + age_offset) + Math.round(Math.random()*strip_size);
+                age_offset;
+            if (d.gndr === "F") {
+                age_offset = (max_age - min_age) - (d.age - min_age);   // Stratify by age, older kids close to middle
+            }  else {
+                age_offset = d.age - min_age;                           // Stratify by age, older kids close to middle
+            }
+            return strip_size * (gndr_offset + age_offset) + Math.round(Math.random()*Math.max(strip_size-2*self.radius, 0));
         })
         .attr("cx", 0)
         .attr("r", self.radius)
